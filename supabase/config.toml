@@ -2,3 +2,6 @@ project_id = "wjtyihirykghwsurkecd"
 
 [functions.diagnostic-chat]
 verify_jwt = false
+
+[functions.diagnostic-tree]
+verify_jwt = false
