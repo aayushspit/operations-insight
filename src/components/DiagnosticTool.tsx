@@ -1,19 +1,67 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowUp, RotateCcw, FileDown } from "lucide-react";
 import { IssueTree } from "./IssueTree";
 import { DiagnosisPanel } from "./DiagnosisPanel";
+import { MessageBubble } from "./MessageBubble";
+import { useDiagnostic } from "@/hooks/useDiagnostic";
 import { useDiagnosticTree } from "@/hooks/useDiagnosticTree";
+import ReactMarkdown from "react-markdown";
+
+const PHASE_LABELS: Record<string, { number: number; label: string }> = {
+  scoping: { number: 1, label: "Problem Scoping" },
+  hypothesis: { number: 2, label: "Root Cause Hypothesis" },
+  probing: { number: 3, label: "Diagnostic Probing" },
+  recommendations: { number: 4, label: "Recommendations" },
+};
+
+type ToolPhase = "input" | "scoping" | "tree-building" | "tree" | "complete";
 
 export function DiagnosticTool() {
   const [input, setInput] = useState("");
-  const { diagnosis, isLoading, phase, generateTree, selectNode, completeDiagnosis, reset } =
-    useDiagnosticTree();
+  const [toolPhase, setToolPhase] = useState<ToolPhase>("input");
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const chat = useDiagnostic();
+  const tree = useDiagnosticTree();
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chat.messages]);
+
+  // When scoping completes, auto-generate the tree
+  useEffect(() => {
+    if (chat.scopingComplete && toolPhase === "scoping" && !tree.diagnosis.tree) {
+      setToolPhase("tree-building");
+      // Extract problem from first user message
+      const problem = chat.messages.find((m) => m.role === "user")?.content || "";
+      const scopingContext = chat.getScopingContext();
+      tree.generateTree(problem, scopingContext);
+    }
+  }, [chat.scopingComplete, toolPhase, tree.diagnosis.tree]);
+
+  // When tree is generated, move to tree phase
+  useEffect(() => {
+    if (tree.diagnosis.tree && toolPhase === "tree-building") {
+      setToolPhase("tree");
+    }
+  }, [tree.diagnosis.tree, toolPhase]);
+
+  // When diagnosis completes
+  useEffect(() => {
+    if (tree.diagnosis.isComplete) {
+      setToolPhase("complete");
+    }
+  }, [tree.diagnosis.isComplete]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!input.trim() || isLoading) return;
-    generateTree(input.trim());
+    if (!input.trim() || chat.isLoading) return;
+    if (toolPhase === "input") {
+      setToolPhase("scoping");
+    }
+    chat.sendMessage(input.trim());
     setInput("");
   };
 
@@ -24,17 +72,85 @@ export function DiagnosticTool() {
     }
   };
 
+  const handleReset = () => {
+    chat.reset();
+    tree.reset();
+    setToolPhase("input");
+    setInput("");
+  };
+
+  const currentPhaseLabel =
+    toolPhase === "tree" || toolPhase === "tree-building"
+      ? PHASE_LABELS.hypothesis
+      : toolPhase === "complete"
+      ? PHASE_LABELS.recommendations
+      : PHASE_LABELS[chat.currentPhase] || PHASE_LABELS.scoping;
+
+  const showChat = toolPhase === "scoping" || toolPhase === "input";
+  const showTree = toolPhase === "tree" || toolPhase === "complete";
+
+  // Clean phase markers from displayed content
+  const cleanContent = (content: string) =>
+    content.replace(/PHASE_\d_COMPLETE/g, "").trim();
+
   return (
-    <div id="diagnostic" className="section-container py-12">
-      <div className="mx-auto max-w-6xl">
-        {/* Input area - shown when idle */}
-        {phase === "idle" && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="mx-auto max-w-2xl"
-          >
+    <div id="diagnostic" className="w-full py-12">
+      {/* Phase indicator */}
+      {toolPhase !== "input" && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="section-container mb-6"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-6">
+              {Object.entries(PHASE_LABELS).map(([key, val]) => {
+                const isActive = val.number === currentPhaseLabel.number;
+                const isDone = val.number < currentPhaseLabel.number;
+                return (
+                  <div key={key} className="flex items-center gap-2">
+                    <div
+                      className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-medium transition-all ${
+                        isDone
+                          ? "bg-[hsl(var(--phase-complete))] text-white"
+                          : isActive
+                          ? "bg-foreground text-background"
+                          : "bg-border text-muted-foreground"
+                      }`}
+                    >
+                      {val.number}
+                    </div>
+                    <span
+                      className={`text-[11px] font-light ${
+                        isActive ? "text-foreground" : "text-muted-foreground"
+                      }`}
+                    >
+                      {val.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              onClick={handleReset}
+              className="flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-light text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Reset
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Input area - shown when idle */}
+      {toolPhase === "input" && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="section-container"
+        >
+          <div className="mx-auto max-w-2xl">
             <form onSubmit={handleSubmit} className="relative">
               <textarea
                 value={input}
@@ -43,11 +159,11 @@ export function DiagnosticTool() {
                 placeholder="Describe a supply chain or procurement problem you're facing..."
                 rows={3}
                 className="diagnostic-input pr-12 resize-none"
-                disabled={isLoading}
+                disabled={chat.isLoading}
               />
               <button
                 type="submit"
-                disabled={!input.trim() || isLoading}
+                disabled={!input.trim() || chat.isLoading}
                 className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-md bg-foreground text-background transition-opacity disabled:opacity-30"
               >
                 <ArrowUp className="h-4 w-4" />
@@ -62,131 +178,160 @@ export function DiagnosticTool() {
               ].map((prompt) => (
                 <button
                   key={prompt}
-                  onClick={() => {
-                    setInput(prompt);
-                  }}
+                  onClick={() => setInput(prompt)}
                   className="rounded border border-border bg-background p-3 text-left text-xs leading-relaxed text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground"
                 >
                   {prompt}
                 </button>
               ))}
             </div>
-          </motion.div>
-        )}
+          </div>
+        </motion.div>
+      )}
 
-        {/* Loading state */}
-        <AnimatePresence>
-          {isLoading && phase === "tree" && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="flex flex-col items-center gap-3 py-16"
-            >
-              <div className="flex gap-1">
-                {[0, 1, 2].map((i) => (
+      {/* Chat-based scoping phase */}
+      {showChat && toolPhase === "scoping" && (
+        <div className="section-container">
+          <div className="mx-auto max-w-2xl">
+            <div className="mb-4 space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+              {chat.messages.map((msg, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                >
                   <div
-                    key={i}
-                    className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-pulse"
-                    style={{ animationDelay: `${i * 0.2}s` }}
-                  />
-                ))}
-              </div>
-              <p className="text-xs font-light text-muted-foreground">
-                Building issue tree...
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                    className={`max-w-[85%] rounded-lg px-4 py-3 text-sm leading-relaxed ${
+                      msg.role === "user"
+                        ? "bg-foreground/5 text-foreground"
+                        : "bg-background border border-border text-foreground/90"
+                    }`}
+                  >
+                    {msg.role === "assistant" ? (
+                      <div className="prose prose-sm max-w-none text-foreground/90 prose-headings:text-foreground prose-strong:text-foreground prose-li:text-foreground/90">
+                        <ReactMarkdown>{cleanContent(msg.content)}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      cleanContent(msg.content)
+                    )}
+                  </div>
+                </motion.div>
+              ))}
+              {chat.isLoading && (
+                <div className="flex justify-start">
+                  <div className="flex gap-1 rounded-lg border border-border bg-background px-4 py-3">
+                    {[0, 1, 2].map((i) => (
+                      <div
+                        key={i}
+                        className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-pulse"
+                        style={{ animationDelay: `${i * 0.2}s` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
 
-        {/* Tree + Panel layout */}
-        {phase !== "idle" && diagnosis.tree && (
+            {/* Chat input */}
+            <form onSubmit={handleSubmit} className="relative">
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Answer the diagnostic questions..."
+                rows={2}
+                className="diagnostic-input pr-12 resize-none"
+                disabled={chat.isLoading}
+              />
+              <button
+                type="submit"
+                disabled={!input.trim() || chat.isLoading}
+                className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-md bg-foreground text-background transition-opacity disabled:opacity-30"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Tree building loading */}
+      <AnimatePresence>
+        {toolPhase === "tree-building" && tree.isLoading && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ duration: 0.4 }}
+            exit={{ opacity: 0 }}
+            className="section-container flex flex-col items-center gap-3 py-16"
           >
-            {/* Controls */}
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {["Scoping", "Hypothesis", "Probing", "Results"].map((label, i) => {
-                  const phaseMap = ["tree", "tree", "probing", "complete"];
-                  const currentIdx =
-                    phase === "tree" ? 1 : phase === "probing" ? 2 : phase === "complete" ? 3 : 0;
-                  const status = i < currentIdx ? "complete" : i === currentIdx ? "active" : "pending";
-                  return (
-                    <div key={label} className="flex items-center gap-1.5">
-                      <div
-                        className={`h-1.5 w-1.5 rounded-full transition-colors ${
-                          status === "complete"
-                            ? "bg-[hsl(var(--phase-complete))]"
-                            : status === "active"
-                            ? "bg-foreground"
-                            : "bg-border"
-                        }`}
-                      />
-                      <span
-                        className={`text-[10px] font-light ${
-                          status === "active" ? "text-foreground" : "text-muted-foreground"
-                        }`}
-                      >
-                        {label}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex gap-2">
-                {diagnosis.selectedPath.length >= 3 && !diagnosis.isComplete && (
-                  <button
-                    onClick={completeDiagnosis}
-                    disabled={isLoading}
-                    className="flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-light text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-                  >
-                    Complete Diagnosis
-                  </button>
-                )}
-                {diagnosis.isComplete && (
-                  <button
-                    onClick={() => {
-                      // PDF export could be added here
-                    }}
-                    className="flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-light text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <FileDown className="h-3 w-3" />
-                    Export
-                  </button>
-                )}
-                <button
-                  onClick={reset}
-                  className="flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-light text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <RotateCcw className="h-3 w-3" />
-                  Reset
-                </button>
-              </div>
-            </div>
-
-            {/* Main content: Tree + Panel */}
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
-              <div className="overflow-x-auto rounded border border-border bg-card/30 p-4">
-                <IssueTree tree={diagnosis.tree} onNodeSelect={selectNode} />
-              </div>
-              <div className="hidden lg:block">
-                <DiagnosisPanel
-                  problemStatement={diagnosis.problemStatement}
-                  selectedPath={diagnosis.selectedPath}
-                  confidence={diagnosis.confidence}
-                  isComplete={diagnosis.isComplete}
-                  rootCauseSummary={diagnosis.rootCauseSummary}
-                  checklistItems={diagnosis.checklistItems}
-                  businessImpact={diagnosis.businessImpact}
+            <div className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-pulse"
+                  style={{ animationDelay: `${i * 0.2}s` }}
                 />
-              </div>
+              ))}
             </div>
+            <p className="text-xs font-light text-muted-foreground">
+              Building MECE issue tree from scoping insights...
+            </p>
           </motion.div>
         )}
-      </div>
+      </AnimatePresence>
+
+      {/* Tree + Panel layout - FULL WIDTH */}
+      {showTree && tree.diagnosis.tree && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.4 }}
+          className="w-full"
+        >
+          {/* Controls */}
+          <div className="section-container mb-4 flex items-center justify-end gap-2">
+            {tree.diagnosis.selectedPath.length >= 3 && !tree.diagnosis.isComplete && (
+              <button
+                onClick={() => tree.completeDiagnosis(chat.getScopingContext())}
+                disabled={tree.isLoading}
+                className="flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-light text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+              >
+                Complete Diagnosis
+              </button>
+            )}
+            {tree.diagnosis.isComplete && (
+              <button
+                onClick={() => {}}
+                className="flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-light text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <FileDown className="h-3 w-3" />
+                Export
+              </button>
+            )}
+          </div>
+
+          {/* Main content: Tree + Panel */}
+          <div className="flex gap-6 px-4 lg:px-8">
+            <div className="min-w-0 flex-1 overflow-x-auto rounded border border-border bg-card/30 p-4">
+              <IssueTree tree={tree.diagnosis.tree} onNodeSelect={tree.selectNode} />
+            </div>
+            <div className="hidden w-[300px] shrink-0 lg:block">
+              <DiagnosisPanel
+                problemStatement={tree.diagnosis.problemStatement}
+                selectedPath={tree.diagnosis.selectedPath}
+                confidence={tree.diagnosis.confidence}
+                isComplete={tree.diagnosis.isComplete}
+                rootCauseSummary={tree.diagnosis.rootCauseSummary}
+                checklistItems={tree.diagnosis.checklistItems}
+                businessImpact={tree.diagnosis.businessImpact}
+              />
+            </div>
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }

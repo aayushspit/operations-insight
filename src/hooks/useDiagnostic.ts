@@ -5,57 +5,39 @@ export interface DiagnosticMessage {
   content: string;
 }
 
-export interface DiagnosticPhase {
-  id: number;
-  name: string;
-  label: string;
-  status: "pending" | "active" | "complete";
-}
+export type DiagnosticPhase = "scoping" | "hypothesis" | "probing" | "recommendations";
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/diagnostic-chat`;
 
 export function useDiagnostic() {
   const [messages, setMessages] = useState<DiagnosticMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [phases, setPhases] = useState<DiagnosticPhase[]>([
-    { id: 1, name: "scoping", label: "Scoping", status: "pending" },
-    { id: 2, name: "hypothesis", label: "Hypothesis", status: "pending" },
-    { id: 3, name: "probing", label: "Probing", status: "pending" },
-    { id: 4, name: "recommendations", label: "Recommendations", status: "pending" },
-  ]);
+  const [currentPhase, setCurrentPhase] = useState<DiagnosticPhase>("scoping");
+  const [scopingComplete, setScopingComplete] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  const updatePhaseFromContent = useCallback((allContent: string) => {
-    const lower = allContent.toLowerCase();
-    setPhases(prev => prev.map(p => {
-      if (p.name === "scoping") {
-        if (lower.includes("hypothesis") || lower.includes("issue tree")) return { ...p, status: "complete" };
-        if (lower.includes("scope") || lower.includes("industry") || lower.includes("context")) return { ...p, status: "active" };
-      }
-      if (p.name === "hypothesis") {
-        if (lower.includes("probing") || lower.includes("diagnostic question")) return { ...p, status: "complete" };
-        if (lower.includes("hypothesis") || lower.includes("issue tree") || lower.includes("mece")) return { ...p, status: "active" };
-      }
-      if (p.name === "probing") {
-        if (lower.includes("recommendation") || lower.includes("prioritization") || lower.includes("quick win")) return { ...p, status: "complete" };
-        if (lower.includes("probing") || lower.includes("diagnostic question") || lower.includes("root cause")) return { ...p, status: "active" };
-      }
-      if (p.name === "recommendations") {
-        if (lower.includes("recommendation") || lower.includes("prioritization") || lower.includes("quick win") || lower.includes("strategic")) return { ...p, status: "active" };
-      }
-      return p;
-    }));
+  const detectPhase = useCallback((content: string) => {
+    if (content.includes("PHASE_3_COMPLETE")) {
+      setCurrentPhase("recommendations");
+    } else if (content.includes("PHASE_2_COMPLETE")) {
+      setCurrentPhase("probing");
+    } else if (content.includes("PHASE_1_COMPLETE")) {
+      setCurrentPhase("hypothesis");
+      setScopingComplete(true);
+    }
   }, []);
+
+  const getScopingContext = useCallback(() => {
+    return messages
+      .map((m) => `${m.role === "user" ? "User" : "Consultant"}: ${m.content}`)
+      .join("\n\n");
+  }, [messages]);
 
   const sendMessage = useCallback(async (input: string) => {
     const userMsg: DiagnosticMessage = { role: "user", content: input };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setIsLoading(true);
-
-    if (phases[0].status === "pending") {
-      setPhases(prev => prev.map((p, i) => i === 0 ? { ...p, status: "active" } : p));
-    }
 
     abortRef.current = new AbortController();
     let assistantSoFar = "";
@@ -110,7 +92,7 @@ export function useDiagnostic() {
                 }
                 return [...prev, { role: "assistant", content: currentContent }];
               });
-              updatePhaseFromContent(currentContent);
+              detectPhase(currentContent);
             }
           } catch {
             textBuffer = line + "\n" + textBuffer;
@@ -123,14 +105,15 @@ export function useDiagnostic() {
     } finally {
       setIsLoading(false);
     }
-  }, [messages, phases, updatePhaseFromContent]);
+  }, [messages, detectPhase]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
     setMessages([]);
     setIsLoading(false);
-    setPhases(prev => prev.map(p => ({ ...p, status: "pending" as const })));
+    setCurrentPhase("scoping");
+    setScopingComplete(false);
   }, []);
 
-  return { messages, isLoading, phases, sendMessage, reset };
+  return { messages, isLoading, currentPhase, scopingComplete, sendMessage, reset, getScopingContext };
 }

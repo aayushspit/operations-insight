@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { FileText } from "lucide-react";
+import { Mail, Phone } from "lucide-react";
 
 export function AboutSection() {
   return (
@@ -34,17 +34,21 @@ export function AboutSection() {
           </p>
         </div>
 
-        <div className="mt-8 flex items-center gap-4">
+        <div className="mt-8 space-y-3">
           <a
-            href="/cv.pdf"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+            href="mailto:aayush.kawathekar@gmail.com"
+            className="flex items-center gap-3 text-sm text-foreground transition-colors hover:text-muted-foreground"
           >
-            <FileText className="h-4 w-4" />
-            View CV
+            <Mail className="h-4 w-4 text-muted-foreground" />
+            aayush.kawathekar@gmail.com
           </a>
-          <p className="text-xs text-muted-foreground">PDF • Updated 2025</p>
+          <a
+            href="tel:+919324188747"
+            className="flex items-center gap-3 text-sm text-foreground transition-colors hover:text-muted-foreground"
+          >
+            <Phone className="h-4 w-4 text-muted-foreground" />
+            +91-9324188747
+          </a>
         </div>
       </motion.div>
     </section>
