@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const TREE_SYSTEM_PROMPT = `You are a Senior Supply Chain Diagnostics Consultant. Given a business problem, generate a structured MECE issue tree.
+const TREE_SYSTEM_PROMPT = `You are a Senior Supply Chain Diagnostics Consultant with 30+ years of experience. Given a business problem and context from scoping questions, generate a structured MECE issue tree following McKinsey methodology.
 
 Return ONLY valid JSON in this exact format (no markdown, no code fences):
 {
@@ -33,27 +33,30 @@ Return ONLY valid JSON in this exact format (no markdown, no code fences):
 }
 
 Rules:
-- Level 1: 4-6 MECE root cause categories (e.g. Logistics, Inventory, Demand Planning, Manufacturing, Procurement)
-- Level 2: 3-5 sub-categories per L1
-- Level 3: 3-5 specific root causes per L2
-- Use supply chain domain expertise. Be specific, not generic.
-- IDs must be unique strings.
-- Labels should be concise (2-5 words).`;
+- Level 1: 4-6 MECE root cause categories relevant to the specific problem (e.g. Planning, Manufacturing, Inventory, Logistics, Procurement)
+- Level 2: 3-5 sub-categories per L1 — specific to the industry and context provided
+- Level 3: 3-5 specific root causes per L2 — actionable and measurable
+- Use supply chain domain expertise and industry benchmarks (GEP, APQC, Gartner, SCOR model)
+- Adapt the tree to the specific industry, region, and problem type from the scoping context
+- IDs must be unique strings
+- Labels should be concise (2-5 words)
+- The tree must be MECE: Mutually Exclusive, Collectively Exhaustive`;
 
-const COMPLETE_SYSTEM_PROMPT = `You are a Senior Supply Chain Diagnostics Consultant. Given a problem and the user's selected diagnostic path through an issue tree, provide a structured diagnosis.
+const COMPLETE_SYSTEM_PROMPT = `You are a Senior Supply Chain Diagnostics Consultant with 30+ years of experience. Given a problem, scoping context, and the user's selected diagnostic path through an issue tree, provide a structured consulting-quality diagnosis.
 
 Return ONLY valid JSON (no markdown, no code fences):
 {
-  "rootCauseSummary": "2-3 sentence summary of the most likely root cause and why",
-  "checklistItems": ["Action item 1", "Action item 2", "Action item 3", "Action item 4", "Action item 5"],
-  "businessImpact": ["Impact 1", "Impact 2", "Impact 3", "Impact 4"]
+  "rootCauseSummary": "2-3 sentence summary of the most likely root cause, referencing industry benchmarks and the specific context. Explain WHY this is the root cause, not just WHAT it is.",
+  "checklistItems": ["Specific actionable item 1 with metric to check", "Item 2", "Item 3", "Item 4", "Item 5"],
+  "businessImpact": ["Quantified impact 1 (e.g. '$X lost revenue')", "Impact 2", "Impact 3", "Impact 4"]
 }
 
 Rules:
-- rootCauseSummary: Explain the root cause clearly, reference industry benchmarks
-- checklistItems: 4-6 specific, actionable items the company should check first
-- businessImpact: 3-5 likely business impacts if not addressed
-- Be specific and practical, not generic`;
+- rootCauseSummary: Reference industry benchmarks (GEP, APQC, Gartner). Be specific to the industry and region.
+- checklistItems: 4-6 specific, actionable items with specific KPIs/metrics to check (e.g. "Check transit lead time vs last quarter benchmark of X days")
+- businessImpact: 3-5 quantified business impacts using industry benchmarks where specific data isn't available
+- Be specific and practical, backed by data or clearly stated assumptions
+- Follow McKinsey pyramid principle: answer first, then support`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -61,7 +64,7 @@ serve(async (req) => {
   }
 
   try {
-    const { action, problem, selectedPath } = await req.json();
+    const { action, problem, selectedPath, scopingContext } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -70,10 +73,10 @@ serve(async (req) => {
 
     if (action === "generate_tree") {
       systemPrompt = TREE_SYSTEM_PROMPT;
-      userMessage = `Generate a MECE issue tree for this problem: ${problem}`;
+      userMessage = `Generate a MECE issue tree for this problem:\n\nProblem: ${problem}\n\nScoping Context (from diagnostic conversation):\n${scopingContext || "No additional context provided."}`;
     } else if (action === "complete") {
       systemPrompt = COMPLETE_SYSTEM_PROMPT;
-      userMessage = `Problem: ${problem}\nDiagnostic path selected: ${selectedPath.join(" → ")}`;
+      userMessage = `Problem: ${problem}\nScoping Context: ${scopingContext || "N/A"}\nDiagnostic path selected: ${selectedPath.join(" → ")}`;
     } else {
       return new Response(JSON.stringify({ error: "Invalid action" }), {
         status: 400,
