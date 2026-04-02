@@ -1,109 +1,73 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUp, RotateCcw, FileDown } from "lucide-react";
+import { ArrowUp, RotateCcw, FileDown, AlertCircle } from "lucide-react";
 import { IssueTree } from "./IssueTree";
 import { DiagnosisPanel } from "./DiagnosisPanel";
-import { useDiagnostic } from "@/hooks/useDiagnostic";
-import { useDiagnosticTree } from "@/hooks/useDiagnosticTree";
+import { useDiagnosticEngine } from "@/hooks/useDiagnosticEngine";
 import { generateFinalReportPDF } from "@/lib/pdfExport";
-import ReactMarkdown from "react-markdown";
 
 const PHASES = [
-  { key: "scoping", number: 1, label: "Problem Scoping" },
-  { key: "hypothesis", number: 2, label: "Root Cause Hypothesis" },
-  { key: "probing", number: 3, label: "Diagnostic Probing" },
-  { key: "recommendations", number: 4, label: "Recommendations" },
+  { number: 1, label: "Problem Scoping" },
+  { number: 2, label: "Root Cause Hypothesis" },
+  { number: 3, label: "Diagnostic Probing" },
+  { number: 4, label: "Recommendations" },
 ];
 
-type ToolPhase = "input" | "scoping" | "tree-building" | "tree" | "complete";
-
 export function DiagnosticTool() {
-  const [input, setInput] = useState("");
-  const [toolPhase, setToolPhase] = useState<ToolPhase>("input");
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [problemInput, setProblemInput] = useState("");
+  const [scopingInputs, setScopingInputs] = useState<string[]>([]);
+  const [probingInputs, setProbingInputs] = useState<string[]>([]);
+  const [started, setStarted] = useState(false);
 
-  const chat = useDiagnostic();
-  const tree = useDiagnosticTree();
+  const engine = useDiagnosticEngine();
+  const { state, isLoading, error, confidence } = engine;
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat.messages]);
+  // ---- Handlers ----
 
-  // When scoping completes, auto-generate the tree
-  useEffect(() => {
-    if (chat.scopingComplete && toolPhase === "scoping" && !tree.diagnosis.tree) {
-      setToolPhase("tree-building");
-      const problem = chat.messages.find((m) => m.role === "user")?.content || "";
-      const scopingContext = chat.getScopingContext();
-      tree.generateTree(problem, scopingContext);
-    }
-  }, [chat.scopingComplete, toolPhase, tree.diagnosis.tree]);
-
-  // When tree is generated, move to tree phase
-  useEffect(() => {
-    if (tree.diagnosis.tree && toolPhase === "tree-building") {
-      setToolPhase("tree");
-    }
-  }, [tree.diagnosis.tree, toolPhase]);
-
-  // When diagnosis completes
-  useEffect(() => {
-    if (tree.diagnosis.isComplete) {
-      setToolPhase("complete");
-    }
-  }, [tree.diagnosis.isComplete]);
-
-  const handleSubmit = (e?: React.FormEvent) => {
+  const handleStartDiagnosis = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!input.trim() || chat.isLoading) return;
-    if (toolPhase === "input") {
-      setToolPhase("scoping");
-    }
-    chat.sendMessage(input.trim());
-    setInput("");
+    if (!problemInput.trim() || isLoading) return;
+    setStarted(true);
+    engine.startScoping(problemInput.trim());
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
+  const handleScopingSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (isLoading) return;
+    engine.submitScopingAnswers(scopingInputs);
+  };
+
+  const handleProbingSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (isLoading) return;
+    engine.submitProbingAnswers(probingInputs);
   };
 
   const handleReset = () => {
-    chat.reset();
-    tree.reset();
-    setToolPhase("input");
-    setInput("");
+    engine.reset();
+    setProblemInput("");
+    setScopingInputs([]);
+    setProbingInputs([]);
+    setStarted(false);
   };
 
   const handleDownloadPDF = () => {
     generateFinalReportPDF({
-      problemStatement: tree.diagnosis.problemStatement,
-      selectedPath: tree.diagnosis.selectedPath,
-      rootCauseSummary: tree.diagnosis.rootCauseSummary || "",
-      checklistItems: tree.diagnosis.checklistItems || [],
-      businessImpact: tree.diagnosis.businessImpact || [],
-      scopingMessages: chat.messages,
+      problemStatement: state.problem,
+      selectedPath: state.selectedPath,
+      rootCauseSummary: state.rootCauseSummary,
+      checklistItems: state.checklistItems,
+      businessImpact: state.businessImpact,
+      scopingMessages: [],
     });
   };
 
-  // Determine active phase number
-  const activePhaseNumber =
-    toolPhase === "input" ? 0
-    : toolPhase === "scoping" ? 1
-    : toolPhase === "tree-building" || toolPhase === "tree" ? 2
-    : toolPhase === "complete" ? 4
-    : 1;
-
-  // Clean phase markers from displayed content
-  const cleanContent = (content: string) =>
-    content.replace(/PHASE_\d_COMPLETE/g, "").trim();
+  const activePhase = state.phase;
 
   return (
     <div id="diagnostic" className="w-full py-12">
       {/* Phase indicator */}
-      {toolPhase !== "input" && (
+      {started && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -112,10 +76,10 @@ export function DiagnosticTool() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-6">
               {PHASES.map((phase) => {
-                const isActive = phase.number === activePhaseNumber;
-                const isDone = phase.number < activePhaseNumber;
+                const isActive = phase.number === activePhase;
+                const isDone = phase.number < activePhase;
                 return (
-                  <div key={phase.key} className="flex items-center gap-2">
+                  <div key={phase.number} className="flex items-center gap-2">
                     <div
                       className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-medium transition-all duration-300 ${
                         isDone
@@ -153,8 +117,25 @@ export function DiagnosticTool() {
         </motion.div>
       )}
 
-      {/* Input area */}
-      {toolPhase === "input" && (
+      {/* Error display */}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="section-container mb-4"
+          >
+            <div className="flex items-center gap-2 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {error}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ====== INITIAL INPUT ====== */}
+      {!started && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -162,19 +143,23 @@ export function DiagnosticTool() {
           className="section-container"
         >
           <div className="mx-auto max-w-2xl">
-            <form onSubmit={handleSubmit} className="relative">
+            <form onSubmit={handleStartDiagnosis} className="relative">
               <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
+                value={problemInput}
+                onChange={(e) => setProblemInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleStartDiagnosis();
+                  }
+                }}
                 placeholder="Describe a supply chain or procurement problem you're facing..."
                 rows={3}
                 className="diagnostic-input pr-12 resize-none"
-                disabled={chat.isLoading}
               />
               <button
                 type="submit"
-                disabled={!input.trim() || chat.isLoading}
+                disabled={!problemInput.trim() || isLoading}
                 className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-md bg-foreground text-background transition-opacity disabled:opacity-30"
               >
                 <ArrowUp className="h-4 w-4" />
@@ -189,7 +174,7 @@ export function DiagnosticTool() {
               ].map((prompt) => (
                 <button
                   key={prompt}
-                  onClick={() => setInput(prompt)}
+                  onClick={() => setProblemInput(prompt)}
                   className="rounded border border-border bg-background p-3 text-left text-xs leading-relaxed text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground"
                 >
                   {prompt}
@@ -200,119 +185,127 @@ export function DiagnosticTool() {
         </motion.div>
       )}
 
-      {/* Chat-based scoping phase */}
-      {toolPhase === "scoping" && (
-        <div className="section-container">
+      {/* ====== PHASE 1: SCOPING QUESTIONS ====== */}
+      {started && state.phase === 1 && state.scopingQuestions.length > 0 && !state.hypothesis && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="section-container"
+        >
           <div className="mx-auto max-w-2xl">
-            <div className="mb-4 space-y-4 max-h-[60vh] overflow-y-auto pr-2">
-              {chat.messages.map((msg, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[85%] rounded-lg px-4 py-3 text-sm leading-relaxed ${
-                      msg.role === "user"
-                        ? "bg-foreground/5 text-foreground"
-                        : "bg-background border border-border text-foreground/90"
-                    }`}
-                  >
-                    {msg.role === "assistant" ? (
-                      <div className="prose prose-sm max-w-none text-foreground/90 prose-headings:text-foreground prose-strong:text-foreground prose-li:text-foreground/90">
-                        <ReactMarkdown>{cleanContent(msg.content)}</ReactMarkdown>
-                      </div>
-                    ) : (
-                      cleanContent(msg.content)
-                    )}
-                  </div>
-                </motion.div>
-              ))}
-              {chat.isLoading && (
-                <div className="flex justify-start">
-                  <div className="flex gap-1 rounded-lg border border-border bg-background px-4 py-3">
-                    {[0, 1, 2].map((i) => (
-                      <div
-                        key={i}
-                        className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-pulse"
-                        style={{ animationDelay: `${i * 0.2}s` }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
+            {/* Show the user's problem */}
+            <div className="mb-6 rounded border border-border bg-card/30 p-4">
+              <div className="mb-1 text-[10px] font-light uppercase tracking-[0.15em] text-muted-foreground">
+                Your Problem
+              </div>
+              <p className="text-sm text-foreground">{state.problem}</p>
             </div>
 
-            <form onSubmit={handleSubmit} className="relative">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Answer the diagnostic questions..."
-                rows={2}
-                className="diagnostic-input pr-12 resize-none"
-                disabled={chat.isLoading}
-              />
-              <button
-                type="submit"
-                disabled={!input.trim() || chat.isLoading}
-                className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-md bg-foreground text-background transition-opacity disabled:opacity-30"
-              >
-                <ArrowUp className="h-4 w-4" />
-              </button>
+            {/* Scoping questions form */}
+            <form onSubmit={handleScopingSubmit} className="space-y-4">
+              <div className="mb-2 text-[10px] font-light uppercase tracking-[0.15em] text-muted-foreground">
+                Please answer the following to scope the problem
+              </div>
+              {state.scopingQuestions.map((q, i) => (
+                <div key={i} className="rounded border border-border bg-background p-4">
+                  <label className="mb-2 block text-sm font-normal text-foreground">
+                    {i + 1}. {q}
+                  </label>
+                  <textarea
+                    value={scopingInputs[i] || ""}
+                    onChange={(e) => {
+                      const next = [...scopingInputs];
+                      next[i] = e.target.value;
+                      setScopingInputs(next);
+                    }}
+                    rows={2}
+                    className="diagnostic-input resize-none text-sm"
+                    placeholder="Your answer..."
+                  />
+                </div>
+              ))}
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isLoading || scopingInputs.filter(Boolean).length === 0}
+                  className="flex items-center gap-2 rounded border border-foreground/20 bg-foreground/5 px-5 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-foreground/10 disabled:opacity-40"
+                >
+                  {isLoading ? (
+                    <>
+                      <LoadingDots />
+                      Analyzing...
+                    </>
+                  ) : (
+                    "Submit & Generate Hypothesis"
+                  )}
+                </button>
+              </div>
             </form>
           </div>
-        </div>
+        </motion.div>
       )}
 
-      {/* Tree building loading */}
-      <AnimatePresence>
-        {toolPhase === "tree-building" && tree.isLoading && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="section-container flex flex-col items-center gap-3 py-16"
-          >
-            <div className="flex gap-1">
-              {[0, 1, 2].map((i) => (
-                <div
-                  key={i}
-                  className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-pulse"
-                  style={{ animationDelay: `${i * 0.2}s` }}
-                />
-              ))}
-            </div>
-            <p className="text-xs font-light text-muted-foreground">
-              Building MECE issue tree from scoping insights...
-            </p>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* ====== LOADING STATE (between phases) ====== */}
+      {started && isLoading && state.scopingQuestions.length === 0 && !state.tree && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="section-container flex flex-col items-center gap-3 py-16"
+        >
+          <LoadingDots />
+          <p className="text-xs font-light text-muted-foreground">
+            Analyzing your problem and preparing scoping questions...
+          </p>
+        </motion.div>
+      )}
 
-      {/* Tree + Panel layout */}
-      {(toolPhase === "tree" || toolPhase === "complete") && tree.diagnosis.tree && (
+      {/* ====== HYPOTHESIS TRANSITION ====== */}
+      {started && state.hypothesis && !state.tree && isLoading && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="section-container"
+        >
+          <div className="mx-auto max-w-2xl">
+            <div className="mb-6 rounded border border-border bg-card/30 p-4">
+              <div className="mb-1 text-[10px] font-light uppercase tracking-[0.15em] text-muted-foreground">
+                Initial Hypothesis
+              </div>
+              <p className="text-sm leading-relaxed text-foreground/90">{state.hypothesis}</p>
+            </div>
+            <div className="flex flex-col items-center gap-3 py-8">
+              <LoadingDots />
+              <p className="text-xs font-light text-muted-foreground">
+                Building MECE issue tree from scoping insights...
+              </p>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* ====== PHASE 2+: TREE + PANEL ====== */}
+      {started && state.tree && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.4 }}
           className="w-full"
         >
+          {/* Hypothesis banner */}
+          {state.hypothesis && (
+            <div className="section-container mb-4">
+              <div className="rounded border border-border bg-card/30 p-4">
+                <div className="mb-1 text-[10px] font-light uppercase tracking-[0.15em] text-muted-foreground">
+                  Hypothesis
+                </div>
+                <p className="text-sm leading-relaxed text-foreground/90">{state.hypothesis}</p>
+              </div>
+            </div>
+          )}
+
           {/* Controls */}
           <div className="section-container mb-4 flex items-center justify-end gap-2">
-            {tree.diagnosis.selectedPath.length >= 3 && !tree.diagnosis.isComplete && (
-              <button
-                onClick={() => tree.completeDiagnosis(chat.getScopingContext())}
-                disabled={tree.isLoading}
-                className="flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-light text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-              >
-                Complete Diagnosis
-              </button>
-            )}
-            {tree.diagnosis.isComplete && (
+            {state.phase === 4 && (
               <button
                 onClick={handleDownloadPDF}
                 className="flex items-center gap-1.5 rounded border border-foreground/20 bg-foreground/5 px-4 py-2 text-xs font-medium text-foreground transition-colors hover:bg-foreground/10"
@@ -326,21 +319,240 @@ export function DiagnosticTool() {
           {/* Main content: Tree + Panel */}
           <div className="flex gap-6 px-4 lg:px-8">
             <div className="min-w-0 flex-1 overflow-x-auto rounded border border-border bg-card/30 p-4">
-              <IssueTree tree={tree.diagnosis.tree} onNodeSelect={tree.selectNode} />
+              <IssueTree tree={state.tree} onNodeSelect={engine.selectNodeAndProbe} />
             </div>
             <div className="hidden w-[300px] shrink-0 lg:block">
               <DiagnosisPanel
-                problemStatement={tree.diagnosis.problemStatement}
-                selectedPath={tree.diagnosis.selectedPath}
-                confidence={tree.diagnosis.confidence}
-                isComplete={tree.diagnosis.isComplete}
-                rootCauseSummary={tree.diagnosis.rootCauseSummary}
-                checklistItems={tree.diagnosis.checklistItems}
-                businessImpact={tree.diagnosis.businessImpact}
+                problemStatement={state.problem}
+                selectedPath={state.selectedPath}
+                confidence={confidence}
+                isComplete={state.phase === 4}
+                rootCauseSummary={state.rootCauseSummary || undefined}
+                checklistItems={state.checklistItems.length > 0 ? state.checklistItems : undefined}
+                businessImpact={state.businessImpact.length > 0 ? state.businessImpact : undefined}
               />
             </div>
           </div>
+
+          {/* ====== PHASE 3: PROBING QUESTIONS ====== */}
+          {state.phase === 3 && state.probingQuestions.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="section-container mt-6"
+            >
+              <div className="mx-auto max-w-2xl">
+                {state.probingHypothesis && (
+                  <div className="mb-4 rounded border border-border bg-card/30 p-4">
+                    <div className="mb-1 text-[10px] font-light uppercase tracking-[0.15em] text-muted-foreground">
+                      Diagnostic Hypothesis
+                    </div>
+                    <p className="text-sm leading-relaxed text-foreground/90 italic">
+                      {state.probingHypothesis}
+                    </p>
+                  </div>
+                )}
+
+                <form onSubmit={handleProbingSubmit} className="space-y-4">
+                  <div className="mb-2 text-[10px] font-light uppercase tracking-[0.15em] text-muted-foreground">
+                    Deep Diagnostic Questions
+                  </div>
+                  {state.probingQuestions.map((q, i) => (
+                    <div key={i} className="rounded border border-border bg-background p-4">
+                      <label className="mb-2 block text-sm font-normal text-foreground">
+                        {i + 1}. {q}
+                      </label>
+                      <textarea
+                        value={probingInputs[i] || ""}
+                        onChange={(e) => {
+                          const next = [...probingInputs];
+                          next[i] = e.target.value;
+                          setProbingInputs(next);
+                        }}
+                        rows={2}
+                        className="diagnostic-input resize-none text-sm"
+                        placeholder="Your answer..."
+                      />
+                    </div>
+                  ))}
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={isLoading || probingInputs.filter(Boolean).length === 0}
+                      className="flex items-center gap-2 rounded border border-foreground/20 bg-foreground/5 px-5 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-foreground/10 disabled:opacity-40"
+                    >
+                      {isLoading ? (
+                        <>
+                          <LoadingDots />
+                          Generating recommendations...
+                        </>
+                      ) : (
+                        "Submit & Get Recommendations"
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ====== PHASE 4: RECOMMENDATIONS ====== */}
+          {state.phase === 4 && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="section-container mt-6"
+            >
+              <div className="mx-auto max-w-3xl space-y-6">
+                {/* Root cause summary */}
+                {state.rootCauseSummary && (
+                  <div className="rounded border border-border bg-background p-5">
+                    <div className="mb-2 text-[10px] font-light uppercase tracking-[0.15em] text-muted-foreground">
+                      Root Cause Summary
+                    </div>
+                    <p className="text-sm leading-relaxed text-foreground/90">{state.rootCauseSummary}</p>
+                  </div>
+                )}
+
+                {/* 2×2 Matrix */}
+                {state.matrix && (
+                  <div>
+                    <div className="mb-3 text-[10px] font-light uppercase tracking-[0.15em] text-muted-foreground">
+                      Impact × Effort Matrix
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <MatrixQuadrant
+                        title="Quick Wins"
+                        subtitle="High Impact · Low Effort"
+                        items={state.matrix.quick_wins}
+                        accent="bg-green-50 border-green-200"
+                      />
+                      <MatrixQuadrant
+                        title="Strategic Bets"
+                        subtitle="High Impact · High Effort"
+                        items={state.matrix.strategic_bets}
+                        accent="bg-blue-50 border-blue-200"
+                      />
+                      <MatrixQuadrant
+                        title="Fill-ins"
+                        subtitle="Low Impact · Low Effort"
+                        items={state.matrix.fill_ins}
+                        accent="bg-gray-50 border-gray-200"
+                      />
+                      <MatrixQuadrant
+                        title="Money Pits"
+                        subtitle="Low Impact · High Effort"
+                        items={state.matrix.money_pits}
+                        accent="bg-red-50 border-red-200"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Detailed recommendations */}
+                {state.recommendations.length > 0 && (
+                  <div>
+                    <div className="mb-3 text-[10px] font-light uppercase tracking-[0.15em] text-muted-foreground">
+                      Detailed Recommendations
+                    </div>
+                    <div className="space-y-3">
+                      {state.recommendations.map((rec, i) => (
+                        <div key={i} className="rounded border border-border bg-background p-4">
+                          <div className="mb-2 flex items-center justify-between">
+                            <h4 className="text-sm font-medium text-foreground">{rec.title}</h4>
+                            <div className="flex items-center gap-2">
+                              <span className="rounded bg-foreground/5 px-2 py-0.5 text-[10px] text-muted-foreground">
+                                {rec.effort} effort
+                              </span>
+                              <span className="rounded bg-foreground/5 px-2 py-0.5 text-[10px] text-muted-foreground">
+                                {rec.timeline}
+                              </span>
+                            </div>
+                          </div>
+                          <p className="mb-2 text-xs leading-relaxed text-foreground/70">{rec.rationale}</p>
+                          <div className="mb-2">
+                            <div className="mb-1 text-[10px] font-light uppercase tracking-[0.1em] text-muted-foreground">
+                              Approach
+                            </div>
+                            <ul className="space-y-1">
+                              {rec.approach.map((step, j) => (
+                                <li key={j} className="text-xs text-foreground/80">
+                                  {j + 1}. {step}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                          <p className="text-xs text-foreground/70">
+                            <span className="font-medium">Expected Impact:</span> {rec.impact}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
         </motion.div>
+      )}
+
+      {/* Loading between tree phases */}
+      {started && isLoading && state.tree && state.phase < 4 && state.probingQuestions.length === 0 && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="section-container mt-4 flex flex-col items-center gap-3 py-8"
+        >
+          <LoadingDots />
+          <p className="text-xs font-light text-muted-foreground">
+            Generating diagnostic questions for selected path...
+          </p>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
+function LoadingDots() {
+  return (
+    <div className="flex gap-1">
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-pulse"
+          style={{ animationDelay: `${i * 0.2}s` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MatrixQuadrant({
+  title,
+  subtitle,
+  items,
+  accent,
+}: {
+  title: string;
+  subtitle: string;
+  items: { title: string; description: string }[];
+  accent: string;
+}) {
+  return (
+    <div className={`rounded border p-4 ${accent}`}>
+      <div className="mb-0.5 text-xs font-medium text-foreground">{title}</div>
+      <div className="mb-2 text-[10px] text-muted-foreground">{subtitle}</div>
+      {items.length > 0 ? (
+        <ul className="space-y-1.5">
+          {items.map((item, i) => (
+            <li key={i}>
+              <div className="text-xs font-medium text-foreground">{item.title}</div>
+              <div className="text-[10px] text-foreground/70">{item.description}</div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[10px] text-muted-foreground italic">None identified</p>
       )}
     </div>
   );
