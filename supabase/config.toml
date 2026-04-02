@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.diagnostic-tree]
 verify_jwt = false
+
+[functions.diagnostic-engine]
+verify_jwt = false
