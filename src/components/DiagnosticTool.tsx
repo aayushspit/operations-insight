@@ -3,17 +3,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowUp, RotateCcw, FileDown } from "lucide-react";
 import { IssueTree } from "./IssueTree";
 import { DiagnosisPanel } from "./DiagnosisPanel";
-import { MessageBubble } from "./MessageBubble";
 import { useDiagnostic } from "@/hooks/useDiagnostic";
 import { useDiagnosticTree } from "@/hooks/useDiagnosticTree";
+import { generateFinalReportPDF } from "@/lib/pdfExport";
 import ReactMarkdown from "react-markdown";
 
-const PHASE_LABELS: Record<string, { number: number; label: string }> = {
-  scoping: { number: 1, label: "Problem Scoping" },
-  hypothesis: { number: 2, label: "Root Cause Hypothesis" },
-  probing: { number: 3, label: "Diagnostic Probing" },
-  recommendations: { number: 4, label: "Recommendations" },
-};
+const PHASES = [
+  { key: "scoping", number: 1, label: "Problem Scoping" },
+  { key: "hypothesis", number: 2, label: "Root Cause Hypothesis" },
+  { key: "probing", number: 3, label: "Diagnostic Probing" },
+  { key: "recommendations", number: 4, label: "Recommendations" },
+];
 
 type ToolPhase = "input" | "scoping" | "tree-building" | "tree" | "complete";
 
@@ -25,7 +25,6 @@ export function DiagnosticTool() {
   const chat = useDiagnostic();
   const tree = useDiagnosticTree();
 
-  // Auto-scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat.messages]);
@@ -34,7 +33,6 @@ export function DiagnosticTool() {
   useEffect(() => {
     if (chat.scopingComplete && toolPhase === "scoping" && !tree.diagnosis.tree) {
       setToolPhase("tree-building");
-      // Extract problem from first user message
       const problem = chat.messages.find((m) => m.role === "user")?.content || "";
       const scopingContext = chat.getScopingContext();
       tree.generateTree(problem, scopingContext);
@@ -79,15 +77,24 @@ export function DiagnosticTool() {
     setInput("");
   };
 
-  const currentPhaseLabel =
-    toolPhase === "tree" || toolPhase === "tree-building"
-      ? PHASE_LABELS.hypothesis
-      : toolPhase === "complete"
-      ? PHASE_LABELS.recommendations
-      : PHASE_LABELS[chat.currentPhase] || PHASE_LABELS.scoping;
+  const handleDownloadPDF = () => {
+    generateFinalReportPDF({
+      problemStatement: tree.diagnosis.problemStatement,
+      selectedPath: tree.diagnosis.selectedPath,
+      rootCauseSummary: tree.diagnosis.rootCauseSummary || "",
+      checklistItems: tree.diagnosis.checklistItems || [],
+      businessImpact: tree.diagnosis.businessImpact || [],
+      scopingMessages: chat.messages,
+    });
+  };
 
-  const showChat = toolPhase === "scoping" || toolPhase === "input";
-  const showTree = toolPhase === "tree" || toolPhase === "complete";
+  // Determine active phase number
+  const activePhaseNumber =
+    toolPhase === "input" ? 0
+    : toolPhase === "scoping" ? 1
+    : toolPhase === "tree-building" || toolPhase === "tree" ? 2
+    : toolPhase === "complete" ? 4
+    : 1;
 
   // Clean phase markers from displayed content
   const cleanContent = (content: string) =>
@@ -104,13 +111,13 @@ export function DiagnosticTool() {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-6">
-              {Object.entries(PHASE_LABELS).map(([key, val]) => {
-                const isActive = val.number === currentPhaseLabel.number;
-                const isDone = val.number < currentPhaseLabel.number;
+              {PHASES.map((phase) => {
+                const isActive = phase.number === activePhaseNumber;
+                const isDone = phase.number < activePhaseNumber;
                 return (
-                  <div key={key} className="flex items-center gap-2">
+                  <div key={phase.key} className="flex items-center gap-2">
                     <div
-                      className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-medium transition-all ${
+                      className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-medium transition-all duration-300 ${
                         isDone
                           ? "bg-[hsl(var(--phase-complete))] text-white"
                           : isActive
@@ -118,14 +125,18 @@ export function DiagnosticTool() {
                           : "bg-border text-muted-foreground"
                       }`}
                     >
-                      {val.number}
+                      {phase.number}
                     </div>
                     <span
-                      className={`text-[11px] font-light ${
-                        isActive ? "text-foreground" : "text-muted-foreground"
+                      className={`text-[11px] transition-all duration-300 ${
+                        isActive
+                          ? "font-medium text-foreground"
+                          : isDone
+                          ? "font-light text-foreground/60"
+                          : "font-light text-muted-foreground/50"
                       }`}
                     >
-                      {val.label}
+                      {phase.label}
                     </span>
                   </div>
                 );
@@ -142,7 +153,7 @@ export function DiagnosticTool() {
         </motion.div>
       )}
 
-      {/* Input area - shown when idle */}
+      {/* Input area */}
       {toolPhase === "input" && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -190,7 +201,7 @@ export function DiagnosticTool() {
       )}
 
       {/* Chat-based scoping phase */}
-      {showChat && toolPhase === "scoping" && (
+      {toolPhase === "scoping" && (
         <div className="section-container">
           <div className="mx-auto max-w-2xl">
             <div className="mb-4 space-y-4 max-h-[60vh] overflow-y-auto pr-2">
@@ -235,7 +246,6 @@ export function DiagnosticTool() {
               <div ref={chatEndRef} />
             </div>
 
-            {/* Chat input */}
             <form onSubmit={handleSubmit} className="relative">
               <textarea
                 value={input}
@@ -283,8 +293,8 @@ export function DiagnosticTool() {
         )}
       </AnimatePresence>
 
-      {/* Tree + Panel layout - FULL WIDTH */}
-      {showTree && tree.diagnosis.tree && (
+      {/* Tree + Panel layout */}
+      {(toolPhase === "tree" || toolPhase === "complete") && tree.diagnosis.tree && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -304,11 +314,11 @@ export function DiagnosticTool() {
             )}
             {tree.diagnosis.isComplete && (
               <button
-                onClick={() => {}}
-                className="flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-light text-muted-foreground transition-colors hover:text-foreground"
+                onClick={handleDownloadPDF}
+                className="flex items-center gap-1.5 rounded border border-foreground/20 bg-foreground/5 px-4 py-2 text-xs font-medium text-foreground transition-colors hover:bg-foreground/10"
               >
-                <FileDown className="h-3 w-3" />
-                Export
+                <FileDown className="h-3.5 w-3.5" />
+                Download Final Recommendation PDF
               </button>
             )}
           </div>

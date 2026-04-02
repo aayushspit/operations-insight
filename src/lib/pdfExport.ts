@@ -1,106 +1,166 @@
 import jsPDF from "jspdf";
 import type { DiagnosticMessage } from "@/hooks/useDiagnostic";
 
-export function generateDiagnosticPDF(messages: DiagnosticMessage[]) {
+interface FinalReportData {
+  problemStatement: string;
+  selectedPath: string[];
+  rootCauseSummary: string;
+  checklistItems: string[];
+  businessImpact: string[];
+  scopingMessages: DiagnosticMessage[];
+}
+
+export function generateFinalReportPDF(data: FinalReportData) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 20;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 22;
   const contentWidth = pageWidth - margin * 2;
   let y = margin;
 
   const addPageIfNeeded = (needed: number) => {
-    if (y + needed > doc.internal.pageSize.getHeight() - margin) {
+    if (y + needed > pageHeight - 20) {
       doc.addPage();
       y = margin;
     }
   };
 
-  // Title
+  const drawSectionTitle = (title: string) => {
+    addPageIfNeeded(14);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(30);
+    doc.text(title.toUpperCase(), margin, y);
+    y += 2;
+    doc.setDrawColor(180);
+    doc.setLineWidth(0.3);
+    doc.line(margin, y, margin + 50, y);
+    y += 6;
+  };
+
+  const drawBody = (text: string) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(50);
+    const lines = doc.splitTextToSize(text, contentWidth);
+    for (const line of lines) {
+      addPageIfNeeded(5);
+      doc.text(line, margin, y);
+      y += 4.5;
+    }
+    y += 3;
+  };
+
+  // === HEADER ===
   doc.setFont("helvetica", "bold");
   doc.setFontSize(18);
+  doc.setTextColor(20);
   doc.text("Supply Chain Diagnostic Report", margin, y);
-  y += 10;
+  y += 8;
 
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
+  doc.setFontSize(8);
   doc.setTextColor(120);
-  doc.text(`Generated ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`, margin, y);
+  doc.text(
+    `Generated ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`,
+    margin, y
+  );
   y += 4;
   doc.text("SC Diagnostics — AI-Powered Consulting Tool", margin, y);
-  doc.setTextColor(0);
-  y += 12;
+  y += 8;
 
-  // Separator
   doc.setDrawColor(200);
+  doc.setLineWidth(0.5);
   doc.line(margin, y, pageWidth - margin, y);
   y += 10;
 
-  // Extract sections from assistant messages
-  const assistantMessages = messages.filter(m => m.role === "assistant");
-  const fullContent = assistantMessages.map(m => m.content).join("\n\n");
+  // === PROBLEM STATEMENT ===
+  drawSectionTitle("Problem Statement");
+  drawBody(data.problemStatement);
 
-  // Sections
-  const sections = [
-    { title: "Executive Summary", marker: /executive\s*summary|situation.*complication.*resolution/i },
-    { title: "Issue Tree / Root Cause Analysis", marker: /issue\s*tree|root\s*cause|mece/i },
-    { title: "Prioritization Matrix", marker: /prioriti[sz]ation|quick\s*win|strategic\s*bet|2x2/i },
-    { title: "Assumptions", marker: /assumption/i },
-  ];
+  // === DIAGNOSTIC PATH ===
+  drawSectionTitle("Diagnostic Path");
+  drawBody(data.selectedPath.join("  →  "));
 
-  // Write conversation as structured report
-  for (const msg of messages) {
-    addPageIfNeeded(20);
-
-    if (msg.role === "user") {
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(80);
-      doc.text("User Input:", margin, y);
-      y += 5;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(60);
-      const userLines = doc.splitTextToSize(msg.content, contentWidth);
-      for (const line of userLines) {
-        addPageIfNeeded(5);
-        doc.text(line, margin, y);
-        y += 4.5;
+  // === KEY FACTS FROM SCOPING ===
+  const userAnswers = data.scopingMessages.filter(m => m.role === "user");
+  if (userAnswers.length > 1) {
+    drawSectionTitle("Key Facts Discovered During Diagnosis");
+    for (let i = 1; i < userAnswers.length; i++) {
+      const cleaned = userAnswers[i].content.replace(/PHASE_\d_COMPLETE/g, "").trim();
+      if (cleaned) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(50);
+        const lines = doc.splitTextToSize(`• ${cleaned}`, contentWidth - 4);
+        for (const line of lines) {
+          addPageIfNeeded(5);
+          doc.text(line, margin + 2, y);
+          y += 4.5;
+        }
       }
-      y += 4;
-    } else {
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(0);
-      doc.text("Diagnostic Analysis:", margin, y);
-      y += 5;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(40);
-
-      // Clean markdown
-      const cleaned = msg.content
-        .replace(/#{1,6}\s/g, "")
-        .replace(/\*\*(.*?)\*\*/g, "$1")
-        .replace(/\*(.*?)\*/g, "$1")
-        .replace(/`(.*?)`/g, "$1");
-
-      const lines = doc.splitTextToSize(cleaned, contentWidth);
-      for (const line of lines) {
-        addPageIfNeeded(5);
-        doc.text(line, margin, y);
-        y += 4.5;
-      }
-      y += 6;
     }
-
-    // Separator between exchanges
-    addPageIfNeeded(6);
-    doc.setDrawColor(230);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 6;
+    y += 3;
   }
 
-  // Footer on all pages
+  // === ROOT CAUSE SUMMARY ===
+  drawSectionTitle("Root Cause Summary");
+  drawBody(data.rootCauseSummary);
+
+  // === WHAT TO CHECK FIRST ===
+  if (data.checklistItems.length > 0) {
+    drawSectionTitle("What the Company Should Check First");
+    for (const item of data.checklistItems) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(50);
+      const lines = doc.splitTextToSize(`☐  ${item}`, contentWidth - 4);
+      for (const line of lines) {
+        addPageIfNeeded(5);
+        doc.text(line, margin + 2, y);
+        y += 4.5;
+      }
+      y += 1;
+    }
+    y += 3;
+  }
+
+  // === BUSINESS IMPACT ===
+  if (data.businessImpact.length > 0) {
+    drawSectionTitle("Likely Business Impact");
+    for (const item of data.businessImpact) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(50);
+      const lines = doc.splitTextToSize(`→  ${item}`, contentWidth - 4);
+      for (const line of lines) {
+        addPageIfNeeded(5);
+        doc.text(line, margin + 2, y);
+        y += 4.5;
+      }
+      y += 1;
+    }
+    y += 3;
+  }
+
+  // === IMPLEMENTATION ROADMAP ===
+  drawSectionTitle("Implementation Roadmap (High Level)");
+  const roadmap = [
+    "Week 1-2: Validate root cause with data collection and stakeholder interviews",
+    "Week 3-4: Quantify value at stake and build business case",
+    "Month 2: Design solution and pilot plan",
+    "Month 3-6: Implement changes, track KPIs, iterate",
+  ];
+  for (const step of roadmap) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(50);
+    addPageIfNeeded(5);
+    doc.text(`•  ${step}`, margin + 2, y);
+    y += 5;
+  }
+
+  // === FOOTER ===
   const pageCount = doc.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -109,9 +169,21 @@ export function generateDiagnosticPDF(messages: DiagnosticMessage[]) {
     doc.text(
       `SC Diagnostics Report — Page ${i} of ${pageCount}`,
       margin,
-      doc.internal.pageSize.getHeight() - 10
+      pageHeight - 10
     );
   }
 
   doc.save("diagnostic-report.pdf");
+}
+
+// Keep legacy export for backward compat
+export function generateDiagnosticPDF(messages: DiagnosticMessage[]) {
+  generateFinalReportPDF({
+    problemStatement: messages.find(m => m.role === "user")?.content || "",
+    selectedPath: [],
+    rootCauseSummary: "",
+    checklistItems: [],
+    businessImpact: [],
+    scopingMessages: messages,
+  });
 }
