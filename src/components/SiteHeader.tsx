@@ -7,7 +7,7 @@ export function SiteHeader() {
         <img
           src={headshot}
           alt="Aayush Kawathekar"
-          className="h-8 w-8 rounded-full object-cover"
+          className="h-8 w-8 rounded-full object-cover object-[center_15%]"
         />
         <span className="text-sm font-light tracking-tight text-foreground">
           Aayush Kawathekar
