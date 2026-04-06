@@ -152,6 +152,9 @@ export function useDiagnosticEngine() {
         scopingAnswers: answers,
       }));
 
+      // Brief delay to avoid rate limiting between sequential calls
+      await new Promise(r => setTimeout(r, 2000));
+
       // Step 2: Auto-generate MECE tree (Phase 2)
       const treeData = await callEngine({
         phase: "tree",
