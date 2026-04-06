@@ -139,24 +139,7 @@ export function useDiagnosticEngine() {
     const scopingContext = contextParts.join("\n");
 
     try {
-      // Step 1: Generate hypothesis
-      const hypData = await callEngine({
-        phase: "hypothesis",
-        problem: state.problem,
-        scopingContext,
-      });
-
-      setState((prev) => ({
-        ...prev,
-        hypothesis: hypData.hypothesis || "",
-        scopingAnswers: answers,
-      }));
-
-      // Brief delay to avoid rate limiting between sequential calls
-      await new Promise(r => setTimeout(r, 2000));
-
-      // Step 2: Auto-generate MECE tree (Phase 2)
-      const treeData = await callEngine({
+      const phaseTwoData = await callEngine({
         phase: "tree",
         problem: state.problem,
         scopingContext,
@@ -165,7 +148,9 @@ export function useDiagnosticEngine() {
       setState((prev) => ({
         ...prev,
         phase: 2,
-        tree: treeData.tree || null,
+        hypothesis: phaseTwoData.hypothesis || "",
+        scopingAnswers: answers,
+        tree: phaseTwoData.tree || null,
       }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate analysis");
