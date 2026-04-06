@@ -167,39 +167,50 @@ Return ONLY this JSON:
 }`,
 };
 
-async function callAI(systemPrompt: string, userMessage: string, apiKey: string) {
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-    }),
-  });
+async function callAI(systemPrompt: string, userMessage: string, apiKey: string, retries = 2): Promise<any> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+      }),
+    });
 
-  if (!response.ok) {
-    if (response.status === 429) throw { status: 429, message: "Rate limit exceeded" };
-    if (response.status === 402) throw { status: 402, message: "Credits exhausted" };
-    const t = await response.text();
-    console.error("AI error:", response.status, t);
-    throw { status: 500, message: "AI service unavailable" };
-  }
+    if (response.status === 429) {
+      if (attempt < retries) {
+        const delay = (attempt + 1) * 3000;
+        console.log(`Rate limited, retrying in ${delay}ms (attempt ${attempt + 1}/${retries})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw { status: 429, message: "Rate limit exceeded. Please wait a moment and try again." };
+    }
 
-  const data = await response.json();
-  let content = data.choices?.[0]?.message?.content || "";
-  content = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    if (!response.ok) {
+      if (response.status === 402) throw { status: 402, message: "Credits exhausted" };
+      const t = await response.text();
+      console.error("AI error:", response.status, t);
+      throw { status: 500, message: "AI service unavailable" };
+    }
 
-  try {
-    return JSON.parse(content);
-  } catch {
-    console.error("Failed to parse AI JSON:", content);
-    throw { status: 500, message: "Invalid AI response format" };
+    const data = await response.json();
+    let content = data.choices?.[0]?.message?.content || "";
+    content = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+
+    try {
+      return JSON.parse(content);
+    } catch {
+      console.error("Failed to parse AI JSON:", content);
+      throw { status: 500, message: "Invalid AI response format" };
+    }
   }
 }
 
