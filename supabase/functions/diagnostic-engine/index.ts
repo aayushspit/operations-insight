@@ -53,17 +53,45 @@ Return ONLY this JSON:
 
   hypothesis: `${INSTRUCTION_CONTEXT}
 
-PHASE 1→2 TRANSITION: HYPOTHESIS GENERATION
+PHASE 2: HYPOTHESIS + MECE ISSUE TREE GENERATION
 
 Given the problem and scoping answers, generate:
 1. An initial hypothesis statement
-2. Signal that we're ready for the MECE tree
+2. A structured MECE issue tree following McKinsey methodology
+
+Rules:
+- Level 1: 4-6 MECE root cause categories relevant to the specific problem
+- Level 2: 3-5 sub-categories per L1 — specific to the industry and context
+- Level 3: 3-5 specific root causes per L2 — actionable and measurable
+- Use supply chain domain expertise and industry benchmarks
+- Adapt to the specific industry, region, and problem type
+- IDs must be unique strings
+- Labels should be concise (2-5 words)
+- The tree must be MECE: Mutually Exclusive, Collectively Exhaustive
 
 Return ONLY this JSON:
 {
-  "phase": 1,
+  "phase": 2,
   "hypothesis": "We believe [problem] is primarily driven by [root causes] across [domains], resulting in [business outcomes]. Key signals include [evidence from scoping].",
-  "ready_for_tree": true
+  "tree": {
+    "id": "root",
+    "label": "PROBLEM STATEMENT IN CAPS",
+    "children": [
+      {
+        "id": "l1-1",
+        "label": "Category Name",
+        "children": [
+          {
+            "id": "l2-1-1",
+            "label": "Sub-category",
+            "children": [
+              { "id": "l3-1-1-1", "label": "Root cause" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
 }`,
 
   tree: `${INSTRUCTION_CONTEXT}
@@ -85,6 +113,7 @@ Rules:
 Return ONLY this JSON:
 {
   "phase": 2,
+  "hypothesis": "We believe [problem] is primarily driven by [root causes] across [domains], resulting in [business outcomes]. Key signals include [evidence from scoping].",
   "tree": {
     "id": "root",
     "label": "PROBLEM STATEMENT IN CAPS",
@@ -105,6 +134,7 @@ Return ONLY this JSON:
     ]
   }
 }`,
+
 
   probing: `${INSTRUCTION_CONTEXT}
 
